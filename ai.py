@@ -4,13 +4,20 @@ import requests
 
 REQUEST_TIMEOUT = 12
 
+SYSTEM_PROMPT = (
+    "Kamu adalah asisten AI yang profesional, ramah, dan membantu. "
+    "Jawab dalam bahasa Indonesia, gunakan format Markdown untuk kode "
+    "(blok kode dengan tiga backtick beserta nama bahasa jika relevan) "
+    "dan bold untuk menekankan poin penting. Jawaban harus jelas, "
+    "ringkas, dan rapi."
+)
+
 
 def _text_from_result(data: dict, *paths: str) -> str | None:
     for path in paths:
         try:
-            parts = path.split(".")
             val = data
-            for key in parts:
+            for key in path.split("."):
                 if key.isdigit():
                     val = val[int(key)]
                 else:
@@ -22,6 +29,10 @@ def _text_from_result(data: dict, *paths: str) -> str | None:
     return None
 
 
+def _openai_messages(messages: list[dict]) -> list[dict]:
+    return [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+
+
 class GeminiProvider:
     name = "Gemini"
 
@@ -29,14 +40,24 @@ class GeminiProvider:
         self.key = os.environ.get("GEMINI_API_KEY", "")
         self.model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
-    def ask(self, prompt: str) -> str | None:
+    def ask(self, messages: list[dict]) -> str | None:
         if not self.key:
             return None
         try:
+            contents = [
+                {
+                    "role": "model" if m["role"] == "assistant" else "user",
+                    "parts": [{"text": m["content"]}],
+                }
+                for m in messages
+            ]
             resp = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
                 params={"key": self.key},
-                json={"contents": [{"parts": [{"text": prompt}]}]},
+                json={
+                    "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                    "contents": contents,
+                },
                 timeout=REQUEST_TIMEOUT,
             )
             if resp.status_code == 429:
@@ -58,7 +79,7 @@ class GroqProvider:
         self.key = os.environ.get("GROQ_API_KEY", "")
         self.model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-    def ask(self, prompt: str) -> str | None:
+    def ask(self, messages: list[dict]) -> str | None:
         if not self.key:
             return None
         try:
@@ -67,7 +88,7 @@ class GroqProvider:
                 headers={"Authorization": f"Bearer {self.key}"},
                 json={
                     "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": _openai_messages(messages),
                 },
                 timeout=REQUEST_TIMEOUT,
             )
@@ -75,9 +96,7 @@ class GroqProvider:
                 return None
             if not resp.ok:
                 return None
-            return _text_from_result(
-                resp.json(), "choices.0.message.content"
-            )
+            return _text_from_result(resp.json(), "choices.0.message.content")
         except requests.RequestException:
             return None
 
@@ -93,14 +112,14 @@ class CloudflareProvider:
             "@cf/meta/llama-3.1-8b-instruct",
         )
 
-    def ask(self, prompt: str) -> str | None:
+    def ask(self, messages: list[dict]) -> str | None:
         if not self.token or not self.account_id:
             return None
         try:
             resp = requests.post(
                 f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run/{self.model}",
                 headers={"Authorization": f"Bearer {self.token}"},
-                json={"messages": [{"role": "user", "content": prompt}]},
+                json={"messages": _openai_messages(messages)},
                 timeout=REQUEST_TIMEOUT,
             )
             if not resp.ok:
@@ -115,9 +134,12 @@ class OpenRouterProvider:
 
     def __init__(self) -> None:
         self.key = os.environ.get("OPENROUTER_API_KEY", "")
-        self.model = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+        self.model = os.environ.get(
+            "OPENROUTER_MODEL",
+            "meta-llama/llama-3.1-8b-instruct:free",
+        )
 
-    def ask(self, prompt: str) -> str | None:
+    def ask(self, messages: list[dict]) -> str | None:
         if not self.key:
             return None
         try:
@@ -129,7 +151,7 @@ class OpenRouterProvider:
                 },
                 json={
                     "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": _openai_messages(messages),
                 },
                 timeout=REQUEST_TIMEOUT,
             )
@@ -137,17 +159,20 @@ class OpenRouterProvider:
                 return None
             if not resp.ok:
                 return None
-            return _text_from_result(
-                resp.json(), "choices.0.message.content"
-            )
+            return _text_from_result(resp.json(), "choices.0.message.content")
         except requests.RequestException:
             return None
 
 
-ALL_PROVIDERS: list = [GeminiProvider(), GroqProvider(), CloudflareProvider(), OpenRouterProvider()]
+ALL_PROVIDERS: list = [
+    GeminiProvider(),
+    GroqProvider(),
+    CloudflareProvider(),
+    OpenRouterProvider(),
+]
 
 
-def ask_ai(prompt: str) -> tuple[str | None, str | None]:
+def ask_ai(messages: list[dict]) -> tuple[str | None, str | None]:
     order = os.environ.get("AI_PROVIDERS", "")
     if order:
         names = [n.strip() for n in order.split(",") if n.strip()]
@@ -164,7 +189,7 @@ def ask_ai(prompt: str) -> tuple[str | None, str | None]:
 
     for provider in ordered:
         try:
-            text = provider.ask(prompt)
+            text = provider.ask(messages)
         except Exception:
             text = None
         if text and text.strip():
