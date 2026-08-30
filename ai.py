@@ -44,7 +44,7 @@ class GeminiProvider:
 
     def __init__(self) -> None:
         self.key = os.environ.get("GEMINI_API_KEY", "")
-        self.model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        self.model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
     def ask(self, messages: list[dict]) -> str | None:
         if not self.key:
@@ -165,7 +165,7 @@ class OpenRouterProvider:
         self.key = os.environ.get("OPENROUTER_API_KEY", "")
         self.model = os.environ.get(
             "OPENROUTER_MODEL",
-            "meta-llama/llama-3.1-8b-instruct:free",
+            "google/gemma-4-31b-it:free",
         )
 
     def ask(self, messages: list[dict]) -> str | None:
