@@ -5,9 +5,23 @@ Bot Telegram AI pintar menggunakan Python, dengan **multi-provider AI + fallback
 Fitur:
 - Chat langsung dengan AI (pesan biasa otomatis dijawab AI)
 - `/ai <pertanyaan>` — tanya AI secara eksplisit
+- `/model` — pilih model AI secara manual (tombol)
 - `/providers` — cek status provider AI
+- `/debug` — diagnostik jika AI error
 - `/start`, `/help`
-- Multi-provider: Gemini, Groq, Cloudflare Workers AI, OpenRouter — jika satu kehabisan kuota, otomatis fallback ke yang lain
+- Multi-provider: Gemini, Groq, Cloudflare Workers AI, OpenRouter — fallback otomatis **per model** sesuai urutan yang bisa diatur
+
+## Mengatur Urutan Fallback (Per-Model)
+
+Set env var `AI_MODELS` (format: `Provider:model`, dipisah koma). Model pertama = prioritas tertinggi. Jika kena limit, otomatis pindah ke model berikutnya.
+
+```bash
+AI_MODELS=OpenRouter:google/gemma-4-31b-it:free,Gemini:gemini-3.6-flash,Groq:llama-3.3-70b-versatile
+```
+
+- Tanpa `AI_MODELS`, urutan default: Gemini → Groq → Cloudflare → OpenRouter (hanya yang key-nya terisi).
+- Model bisa diulang untuk provider yang sama, contoh: `OpenRouter:model-a:free,OpenRouter:model-b:free`.
+- Di bot, perintah `/model` menampilkan semua model dengan tombol untuk memilih manual. Jika model yang dipilih kena limit, tetap fallback ke urutan di bawahnya.
 
 ## Daftar API Key (semua gratis)
 
