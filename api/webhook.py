@@ -3,6 +3,8 @@ import os
 import requests
 from flask import Flask, request
 
+from ai import ask_ai, configured_providers
+
 app = Flask(__name__)
 
 TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -12,18 +14,38 @@ API_BASE = f"https://api.telegram.org/bot{TOKEN}"
 def handle_message(text: str) -> str | None:
     if text == "/start":
         return (
-            "Halo! Saya bot Telegram sederhana. Kirim /help untuk melihat perintah."
+            "Halo! Saya bot AI pintar. Kirim /help untuk melihat perintah.\n"
+            "\nKamu bisa langsung chat denganku, atau pakai /ai <pertanyaan>."
         )
     if text == "/help":
         return (
             "Perintah yang tersedia:\n"
             "/start - mulai percakapan\n"
             "/help - bantuan\n"
-            "\nKamu juga bisa mengirim pesan teks apa pun dan aku akan membalasnya."
+            "/ai <pertanyaan> - tanya AI secara eksplisit\n"
+            "/providers - cek status provider AI\n"
+            "\nKamu juga bisa langsung kirim pesan dan aku akan menjawabnya dengan AI."
         )
+    if text == "/providers":
+        lines = ["Status provider AI:"]
+        for p in configured_providers():
+            status = "aktif" if p["configured"] else "belum diset"
+            lines.append(f"- {p['name']}: {status}")
+        return "\n".join(lines)
+    if text.startswith("/ai "):
+        prompt = text[4:].strip()
+        if not prompt:
+            return "Gunakan format: /ai <pertanyaan>"
+        answer, provider = ask_ai(prompt)
+        if answer:
+            return f"🤖 ({provider})\n\n{answer}"
+        return "Maaf, semua provider AI sedang tidak tersedia atau kehabisan kuota. Coba lagi nanti."
     if text.startswith("/"):
         return None
-    return f"Kamu bilang: {text}"
+    answer, provider = ask_ai(text)
+    if answer:
+        return f"🤖 ({provider})\n\n{answer}"
+    return "Maaf, AI sedang tidak tersedia saat ini. Coba lagi nanti."
 
 
 @app.route("/", methods=["POST"])

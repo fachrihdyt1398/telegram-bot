@@ -1,11 +1,24 @@
 # Telegram Bot Sederhana
 
-Bot Telegram sederhana menggunakan Python, siap di-deploy ke [Vercel](https://vercel.com) (gratis, tanpa kartu kredit) atau [Render](https://render.com).
+Bot Telegram AI pintar menggunakan Python, dengan **multi-provider AI + fallback otomatis**. Siap di-deploy ke [Vercel](https://vercel.com) (gratis, tanpa kartu kredit) atau [Render](https://render.com).
 
 Fitur:
-- `/start` — memulai percakapan
-- `/help` — daftar perintah
-- Echo — membalas pesan teks apa pun
+- Chat langsung dengan AI (pesan biasa otomatis dijawab AI)
+- `/ai <pertanyaan>` — tanya AI secara eksplisit
+- `/providers` — cek status provider AI
+- `/start`, `/help`
+- Multi-provider: Gemini, Groq, Cloudflare Workers AI, OpenRouter — jika satu kehabisan kuota, otomatis fallback ke yang lain
+
+## Daftar API Key (semua gratis)
+
+| Provider | Cara dapat | Env var |
+|---|---|---|
+| Google Gemini | https://aistudio.google.com/apikey | `GEMINI_API_KEY` |
+| Groq | https://console.groq.com/keys | `GROQ_API_KEY` |
+| Cloudflare Workers AI | https://dash.cloudflare.com/profile/api-tokens | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| OpenRouter | https://openrouter.ai/keys | `OPENROUTER_API_KEY` |
+
+Cukup set minimal **satu** API key. Urutan fallback bisa diatur via env var `AI_PROVIDERS`, contoh: `Gemini,Groq,OpenRouter,Cloudflare`.
 
 ## Cara Menjalankan Lokal
 
