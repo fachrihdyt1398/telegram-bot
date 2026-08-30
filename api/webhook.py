@@ -5,7 +5,7 @@ import re
 import requests
 from flask import Flask, request
 
-from ai import ask_ai, configured_providers
+from ai import ask_ai, configured_providers, get_last_errors
 
 app = Flask(__name__)
 
@@ -167,6 +167,17 @@ def handle_message(msg: dict) -> None:
 
     if text == "/providers":
         send_message(chat_id, providers_text())
+        return
+
+    if text == "/debug":
+        errors = get_last_errors()
+        if not errors:
+            send_message(chat_id, "🔍 Belum ada percobaan AI. Kirim pesan dulu untuk test.")
+            return
+        lines = ["🐞 <b>Diagnostik AI (percobaan terakhir):</b>"]
+        for name, err in errors.items():
+            lines.append(f"• <b>{name}</b>: {escape_html(err)}")
+        send_message(chat_id, "\n".join(lines))
         return
 
     if text in ("/reset", "/new"):

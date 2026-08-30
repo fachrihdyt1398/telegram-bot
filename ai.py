@@ -12,6 +12,8 @@ SYSTEM_PROMPT = (
     "ringkas, dan rapi."
 )
 
+LAST_ERRORS: dict[str, str] = {}
+
 
 def _text_from_result(data: dict, *paths: str) -> str | None:
     for path in paths:
@@ -33,6 +35,10 @@ def _openai_messages(messages: list[dict]) -> list[dict]:
     return [{"role": "system", "content": SYSTEM_PROMPT}] + messages
 
 
+def _record_error(name: str, detail: str) -> None:
+    LAST_ERRORS[name] = detail
+
+
 class GeminiProvider:
     name = "Gemini"
 
@@ -42,6 +48,7 @@ class GeminiProvider:
 
     def ask(self, messages: list[dict]) -> str | None:
         if not self.key:
+            _record_error(self.name, "API key kosong")
             return None
         try:
             contents = [
@@ -61,14 +68,21 @@ class GeminiProvider:
                 timeout=REQUEST_TIMEOUT,
             )
             if resp.status_code == 429:
+                _record_error(self.name, "HTTP 429 (rate limit)")
                 return None
             if not resp.ok:
+                body = resp.text[:300]
+                _record_error(self.name, f"HTTP {resp.status_code}: {body}")
                 return None
-            return _text_from_result(
+            text = _text_from_result(
                 resp.json(),
                 "candidates.0.content.parts.0.text",
             )
-        except requests.RequestException:
+            if not text:
+                _record_error(self.name, "Respons tanpa teks")
+            return text
+        except requests.RequestException as exc:
+            _record_error(self.name, f"Request gagal: {exc}")
             return None
 
 
@@ -81,6 +95,7 @@ class GroqProvider:
 
     def ask(self, messages: list[dict]) -> str | None:
         if not self.key:
+            _record_error(self.name, "API key kosong")
             return None
         try:
             resp = requests.post(
@@ -93,11 +108,18 @@ class GroqProvider:
                 timeout=REQUEST_TIMEOUT,
             )
             if resp.status_code == 429:
+                _record_error(self.name, "HTTP 429 (rate limit)")
                 return None
             if not resp.ok:
+                body = resp.text[:300]
+                _record_error(self.name, f"HTTP {resp.status_code}: {body}")
                 return None
-            return _text_from_result(resp.json(), "choices.0.message.content")
-        except requests.RequestException:
+            text = _text_from_result(resp.json(), "choices.0.message.content")
+            if not text:
+                _record_error(self.name, "Respons tanpa teks")
+            return text
+        except requests.RequestException as exc:
+            _record_error(self.name, f"Request gagal: {exc}")
             return None
 
 
@@ -114,6 +136,7 @@ class CloudflareProvider:
 
     def ask(self, messages: list[dict]) -> str | None:
         if not self.token or not self.account_id:
+            _record_error(self.name, "Token/Account ID kosong")
             return None
         try:
             resp = requests.post(
@@ -123,9 +146,15 @@ class CloudflareProvider:
                 timeout=REQUEST_TIMEOUT,
             )
             if not resp.ok:
+                body = resp.text[:300]
+                _record_error(self.name, f"HTTP {resp.status_code}: {body}")
                 return None
-            return _text_from_result(resp.json(), "result.response")
-        except requests.RequestException:
+            text = _text_from_result(resp.json(), "result.response")
+            if not text:
+                _record_error(self.name, "Respons tanpa teks")
+            return text
+        except requests.RequestException as exc:
+            _record_error(self.name, f"Request gagal: {exc}")
             return None
 
 
@@ -141,6 +170,7 @@ class OpenRouterProvider:
 
     def ask(self, messages: list[dict]) -> str | None:
         if not self.key:
+            _record_error(self.name, "API key kosong")
             return None
         try:
             resp = requests.post(
@@ -156,11 +186,18 @@ class OpenRouterProvider:
                 timeout=REQUEST_TIMEOUT,
             )
             if resp.status_code == 429:
+                _record_error(self.name, "HTTP 429 (rate limit)")
                 return None
             if not resp.ok:
+                body = resp.text[:300]
+                _record_error(self.name, f"HTTP {resp.status_code}: {body}")
                 return None
-            return _text_from_result(resp.json(), "choices.0.message.content")
-        except requests.RequestException:
+            text = _text_from_result(resp.json(), "choices.0.message.content")
+            if not text:
+                _record_error(self.name, "Respons tanpa teks")
+            return text
+        except requests.RequestException as exc:
+            _record_error(self.name, f"Request gagal: {exc}")
             return None
 
 
@@ -173,6 +210,7 @@ ALL_PROVIDERS: list = [
 
 
 def ask_ai(messages: list[dict]) -> tuple[str | None, str | None]:
+    LAST_ERRORS.clear()
     order = os.environ.get("AI_PROVIDERS", "")
     if order:
         names = [n.strip() for n in order.split(",") if n.strip()]
@@ -190,11 +228,16 @@ def ask_ai(messages: list[dict]) -> tuple[str | None, str | None]:
     for provider in ordered:
         try:
             text = provider.ask(messages)
-        except Exception:
+        except Exception as exc:
             text = None
+            _record_error(provider.name, f"Eksepsi: {exc}")
         if text and text.strip():
             return text.strip(), provider.name
     return None, None
+
+
+def get_last_errors() -> dict[str, str]:
+    return dict(LAST_ERRORS)
 
 
 def configured_providers() -> list[dict]:
