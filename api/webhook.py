@@ -486,6 +486,25 @@ def handle_callback(cq: dict) -> None:
         return
 
 
+@app.route("/api/admin/webhook", methods=["POST"])
+def admin_set_webhook():
+    if not SECRET or request.headers.get("X-Admin-Token", "") != SECRET:
+        return "forbidden", 403
+    base = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+    if not base:
+        return "WEBHOOK_URL tidak diset", 500
+    payload = {
+        "url": f"{base}/api/webhook",
+        "secret_token": SECRET,
+        "drop_pending_updates": False,
+    }
+    try:
+        resp = requests.post(f"{API_BASE}/setWebhook", json=payload, timeout=15)
+        return resp.text, resp.status_code
+    except requests.RequestException as exc:
+        return f"error: {exc}", 502
+
+
 @app.route("/", methods=["GET"])
 def health():
     return "fachri_AI bot is alive 🤖", 200
