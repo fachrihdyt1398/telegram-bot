@@ -3,7 +3,7 @@ import os
 
 import requests
 
-CF_TOKEN = os.environ.get("CLOUDFLARE_KV_TOKEN", "")
+CF_TOKEN = os.environ.get("CLOUDFLARE_KV_TOKEN") or os.environ.get("CLOUDFLARE_API_TOKEN", "")
 CF_ACCOUNT = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
 CF_NAMESPACE = os.environ.get("CLOUDFLARE_KV_NAMESPACE_ID", "")
 
