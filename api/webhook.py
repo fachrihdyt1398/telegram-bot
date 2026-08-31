@@ -490,9 +490,7 @@ def handle_callback(cq: dict) -> None:
 def admin_set_webhook():
     if not SECRET or request.headers.get("X-Admin-Token", "") != SECRET:
         return "forbidden", 403
-    base = os.environ.get("WEBHOOK_URL", "").rstrip("/")
-    if not base:
-        return "WEBHOOK_URL tidak diset", 500
+    base = os.environ.get("WEBHOOK_URL", "").strip().rstrip("/") or request.url_root.rstrip("/")
     payload = {
         "url": f"{base}/api/webhook",
         "secret_token": SECRET,
