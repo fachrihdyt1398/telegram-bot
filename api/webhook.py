@@ -1,10 +1,12 @@
 import html
+import logging
 import os
 import re
 
 import requests
 from flask import Flask, request
 
+import cloudstore as store
 from ai import (
     ask_ai,
     available_models,
@@ -13,14 +15,15 @@ from ai import (
 )
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("BOT_TOKEN", "")
+SECRET = os.environ.get("WEBHOOK_SECRET", "")
 API_BASE = f"https://api.telegram.org/bot{TOKEN}"
 
 MAX_HISTORY = 20
-
-CONVERSATIONS: dict[int, list[dict]] = {}
-USER_SETTINGS: dict[int, dict] = {}
+TG_LIMIT = 4000
 
 MAIN_MENU = {
     "inline_keyboard": [
@@ -51,25 +54,59 @@ def tg(method: str, **kwargs) -> dict:
         return {}
 
 
+def split_html(text: str, limit: int = TG_LIMIT) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    in_pre = False
+    for line in text.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if current and len(candidate) > limit:
+            chunks.append(current + ("</pre>" if in_pre else ""))
+            current = (f"<pre>\n{line}") if in_pre else line
+        else:
+            current = candidate
+        in_pre = (in_pre + line.count("<pre>") - line.count("</pre>")) > 0
+    if current:
+        chunks.append(current + ("</pre>" if in_pre else ""))
+    safe: list[str] = []
+    for chunk in chunks:
+        while len(chunk) > 4090:
+            safe.append(chunk[:4090])
+            chunk = chunk[4090:]
+        if chunk:
+            safe.append(chunk)
+    return safe
+
+
 def send_message(chat_id: int, text: str, reply_markup: dict | None = None) -> int | None:
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    result = tg("sendMessage", **payload)
-    msg = result.get("result") or {}
-    return msg.get("message_id")
+    parts = split_html(text)
+    last_id = None
+    for i, part in enumerate(parts):
+        payload = {"chat_id": chat_id, "text": part, "parse_mode": "HTML"}
+        if reply_markup and i == len(parts) - 1:
+            payload["reply_markup"] = reply_markup
+        result = tg("sendMessage", **payload)
+        msg = result.get("result") or {}
+        last_id = msg.get("message_id", last_id)
+    return last_id
 
 
 def edit_message(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None) -> None:
+    parts = split_html(text)
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
-        "text": text,
+        "text": parts[0],
         "parse_mode": "HTML",
     }
-    if reply_markup:
+    if reply_markup and len(parts) == 1:
         payload["reply_markup"] = reply_markup
     tg("editMessageText", **payload)
+    for i, extra in enumerate(parts[1:], start=1):
+        markup = reply_markup if i == len(parts) - 1 else None
+        send_message(chat_id, extra, markup)
 
 
 def answer_callback(callback_id: str, text: str = "", alert: bool = False) -> None:
@@ -107,42 +144,56 @@ def format_answer(text: str) -> str:
     return text
 
 
+def _chat_key(chat_id: int) -> str:
+    return f"chat:{chat_id}"
+
+
+def _user_key(chat_id: int) -> str:
+    return f"user:{chat_id}"
+
+
 def get_history(chat_id: int) -> list[dict]:
-    return CONVERSATIONS.get(chat_id, [])
+    return store.get_json(_chat_key(chat_id), []) or []
 
 
 def add_message(chat_id: int, role: str, content: str) -> None:
-    history = CONVERSATIONS.setdefault(chat_id, [])
+    history = get_history(chat_id)
     history.append({"role": role, "content": content})
-    CONVERSATIONS[chat_id] = history[-MAX_HISTORY:]
+    store.put_json(_chat_key(chat_id), history[-MAX_HISTORY:])
 
 
 def reset_chat(chat_id: int) -> None:
-    CONVERSATIONS.pop(chat_id, None)
+    store.put_json(_chat_key(chat_id), [])
+
+
+def _user_settings(chat_id: int) -> dict:
+    return store.get_json(_user_key(chat_id), {}) or {}
 
 
 def get_selected_model(chat_id: int) -> str | None:
-    return USER_SETTINGS.get(chat_id, {}).get("selected_model")
+    return _user_settings(chat_id).get("selected_model")
 
 
 def set_selected_model(chat_id: int, key: str | None) -> None:
-    settings = USER_SETTINGS.setdefault(chat_id, {})
+    settings = _user_settings(chat_id)
     if key:
         settings["selected_model"] = key
     else:
         settings.pop("selected_model", None)
+    store.put_json(_user_key(chat_id), settings)
 
 
 def get_user_order(chat_id: int) -> list[str] | None:
-    return USER_SETTINGS.get(chat_id, {}).get("order")
+    return _user_settings(chat_id).get("order")
 
 
 def set_user_order(chat_id: int, keys: list[str] | None) -> None:
-    settings = USER_SETTINGS.setdefault(chat_id, {})
+    settings = _user_settings(chat_id)
     if keys:
         settings["order"] = keys
     else:
         settings.pop("order", None)
+    store.put_json(_user_key(chat_id), settings)
 
 
 def active_order(chat_id: int) -> list[str]:
@@ -171,7 +222,7 @@ def model_menu_text(chat_id: int) -> str:
     selected = get_selected_model(chat_id)
     lines = ["🎛 <b>Pilih Model AI</b>\n"]
     if selected:
-        lines.append(f"• Pilihan saat ini: <b>{selected}</b>")
+        lines.append(f"• Pilihan saat ini: <b>{escape_html(selected)}</b>")
         lines.append("• Jika model ini kena limit, otomatis pindah ke urutan fallback di bawah.\n")
     else:
         lines.append("• Mode <b>Otomatis</b>: memakai urutan fallback yang diatur (AI_MODELS atau /setorder).\n")
@@ -179,7 +230,7 @@ def model_menu_text(chat_id: int) -> str:
     order = active_order(chat_id)
     for idx, key in enumerate(order, 1):
         marker = "→" if key == selected else "•"
-        lines.append(f"{idx}. {marker} {key}")
+        lines.append(f"{idx}. {marker} {escape_html(key)}")
     if get_user_order(chat_id):
         lines.append("\n✏️ Urutan khusus kamu aktif. Ubah dengan /setorder, reset dengan /setorder reset.")
     else:
@@ -194,11 +245,12 @@ def build_ai_reply(chat_id: int, prompt: str) -> str:
     answer, provider, model_key = ask_ai(
         get_history(chat_id), preferred_key=preferred, order=order
     )
+    store.put_json("last_errors", get_last_errors())
     if answer:
         add_message(chat_id, "assistant", answer)
         model_name = model_key.split(":", 1)[1] if model_key else ""
         return f"🤖 <b>{provider}</b> · <code>{escape_html(model_name)}</code>\n\n{format_answer(answer)}"
-    return "😔 Maaf, semua model AI sedang tidak tersedia atau kehabisan kuota. Coba lagi nanti."
+    return "😔 Maaf, semua model AI sedang tidak tersedia atau kehabisan kuota. Coba lagi nanti atau ketik /debug."
 
 
 def providers_text() -> str:
@@ -206,6 +258,8 @@ def providers_text() -> str:
     for p in configured_providers():
         status = "🟢 aktif" if p["configured"] else "🔴 belum diset"
         lines.append(f"• {p['name']}: {status}")
+    if not store.enabled():
+        lines.append("\n⚠️ Cloudflare KV tidak aktif — memori percakapan sementara (hilang saat instance berganti).")
     return "\n".join(lines)
 
 
@@ -220,8 +274,8 @@ def help_text() -> str:
         "• /providers — cek status provider\n"
         "• /debug — diagnostik jika AI error\n"
         "• /reset — mulai percakapan baru\n\n"
-        "✨ Aku punya <b>memori percakapan</b>, jadi kamu bisa lanjut diskusi "
-        "tanpa mengulang konteks.\n"
+        "✨ Aku punya <b>memori percakapan permanen</b> (Cloudflare KV), "
+        "jadi kamu bisa lanjut diskusi tanpa mengulang konteks.\n"
         "🎨 Jawaban mendukung <b>bold</b>, <i>italic</i>, dan blok kode.\n\n"
         "🔁 <b>Auto Fallback:</b> Jika model pilihanmu sedang limit/error, "
         "aku otomatis beralih ke model berikutnya sesuai urutan."
@@ -320,13 +374,13 @@ def handle_message(msg: dict) -> None:
         return
 
     if text == "/debug":
-        errors = get_last_errors()
+        errors = store.get_json("last_errors", {}) or {}
         if not errors:
             send_message(chat_id, "🔍 Belum ada percobaan AI. Kirim pesan dulu untuk test.")
             return
         lines = ["🐞 <b>Diagnostik AI (percobaan terakhir):</b>"]
         for key, err in errors.items():
-            lines.append(f"• <b>{escape_html(key)}</b>: {escape_html(err)}")
+            lines.append(f"• <b>{escape_html(str(key))}</b>: {escape_html(str(err))}")
         send_message(chat_id, "\n".join(lines))
         return
 
@@ -432,14 +486,24 @@ def handle_callback(cq: dict) -> None:
         return
 
 
+@app.route("/", methods=["GET"])
+def health():
+    return "fachri_AI bot is alive 🤖", 200
+
+
 @app.route("/", methods=["POST"])
 @app.route("/api/webhook", methods=["POST"])
 def webhook():
+    if SECRET and request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != SECRET:
+        logger.warning("Percobaan akses webhook tanpa secret token yang sah")
+        return "forbidden", 403
+
     update = request.get_json(force=True, silent=True) or {}
-
-    if "message" in update:
-        handle_message(update["message"])
-    elif "callback_query" in update:
-        handle_callback(update["callback_query"])
-
+    try:
+        if "message" in update:
+            handle_message(update["message"])
+        elif "callback_query" in update:
+            handle_callback(update["callback_query"])
+    except Exception:
+        logger.exception("Error saat memproses update Telegram")
     return "ok", 200
